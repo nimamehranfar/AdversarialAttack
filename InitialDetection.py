@@ -10,6 +10,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using {device} device")
 
 dataset_path = r'C:\Users\mehra\IdeaProjects\AdversarialAttackProject\Filtered_Dataset'
+attacked_path = r'C:\Users\mehra\IdeaProjects\AdversarialAttackProject\Attacked_Dataset1_alone'
 
 dataset_to_imagenet_idx = {
     'African elephant': 386,
@@ -19,6 +20,7 @@ dataset_to_imagenet_idx = {
     'giant panda': 388,
     'gorilla': 366,
     'king penguin': 145,
+    'king_penguin': 145,
     'koala': 105,
     'ladybug': 301,
     'lion': 291,
