@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using {device} as device")
 
-dataset_path = r'C:\Users\mehra\IdeaProjects\AdversarialAttackProject\Filtered_Dataset'
+dataset_path = r'C:\Users\mehra\IdeaProjects\AdversarialAttack\Filtered_Dataset'
 
 dataset_to_imagenet_index = {
     'African elephant': 386,
@@ -72,7 +72,7 @@ def denorm(data):
     std = torch.tensor([0.229, 0.224, 0.225]).view(-1, 1, 1).to(data.device)
     return data * std + mean
 
-def fgsm_attack(image, epsilon, data_grad):
+def fgsm_attack1(image, epsilon, data_grad):
     # Get sign of gradients
     sign_data_grad = data_grad.sign()
     # Add perturbation
@@ -104,7 +104,7 @@ def attack_king_penguins(model, device, test_loader, epsilon, output_folder=0):
         loss.backward()
 
         data_grad = image.grad.data
-        perturbed_image = fgsm_attack(image, epsilon, data_grad)
+        perturbed_image = fgsm_attack1(image, epsilon, data_grad)
 
         # Save original and adversarial images
         orig_img = inv_norm(image.squeeze().cpu()).clamp(0, 1)
@@ -141,14 +141,17 @@ def attack_king_penguins(model, device, test_loader, epsilon, output_folder=0):
 #success_rate = attack_king_penguins(model, device, king_penguin_loader, 0.3, "attacked_king_penguin")
 
 
-def attack_with_denorm_and_re_norm(model, device, test_loader, epsilon, output_folder=0):
+# Normalization & De-normalization
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+inv_norm = transforms.Normalize(
+    mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
+    std=[1 / 0.229, 1 / 0.224, 1 / 0.225]
+)
+def fgsm_attack2(model, device, test_loader, epsilon, output_folder=0):
     model.eval()
     correct = 0
     total = 0
-    inv_norm = transforms.Normalize(
-        mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
-        std=[1 / 0.229, 1 / 0.224, 1 / 0.225]
-    )
 
     for i, (data, target, index) in enumerate(test_loader):
         data, target = data.to(device), target.to(device)
@@ -168,11 +171,8 @@ def attack_with_denorm_and_re_norm(model, device, test_loader, epsilon, output_f
         data_denorm = denorm(data.squeeze())
 
         # Call FGSM Attack
-        perturbed_data = fgsm_attack(data_denorm, epsilon, data_grad.squeeze())
+        perturbed_data = fgsm_attack1(data_denorm, epsilon, data_grad.squeeze())
 
-        # Reapply normalization
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
         perturbed_data_normalized = normalize(perturbed_data).unsqueeze(0)
 
         # Re-classify the perturbed image
@@ -212,18 +212,18 @@ def attack_with_denorm_and_re_norm(model, device, test_loader, epsilon, output_f
     return success_rate
 
 
-rate1 = attack_king_penguins(model, device, king_penguin_loader, 0.3, 0)
-rate2 = attack_with_denorm_and_re_norm(model, device, king_penguin_loader, 0.3, 0)
+# rate1 = attack_king_penguins(model, device, king_penguin_loader, 0.3, 0)
+# rate2 = fgsm_attack2(model, device, king_penguin_loader, 0.3, 0)
 
 epsilons = np.linspace(0, 0.3, 10)
 success_rates1 = []
 success_rates2 = []
 
 for epsilon in epsilons:
-    # rate1 = attack_king_penguins(model, device, king_penguin_loader, epsilon, 0)
-    # rate2 = attack_with_denorm_and_re_norm(model, device, king_penguin_loader, epsilon, 0)
+    rate1 = attack_king_penguins(model, device, king_penguin_loader, epsilon, 0)
+    rate2 = fgsm_attack2(model, device, king_penguin_loader, epsilon, 0)
     # rate1 = attack_king_penguins(model, device, king_penguin_loader, epsilon, "Attacked_Dataset1")
-    # rate2 = attack_with_denorm_and_re_norm(model, device, king_penguin_loader, epsilon, "Attacked_Dataset2")
+    # rate2 = fgsm_attack2(model, device, king_penguin_loader, epsilon, "Attacked_Dataset2")
     success_rates1.append(rate1)
     success_rates2.append(rate2)
 

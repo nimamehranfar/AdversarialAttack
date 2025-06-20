@@ -3,14 +3,13 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from torchvision.models import mobilenet_v2, MobileNet_V2_Weights, resnet50, ResNet50_Weights
-from collections import Counter
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using {device} device")
 
-dataset_path = r'C:\Users\mehra\IdeaProjects\AdversarialAttackProject\Filtered_Dataset'
-attacked_path = r'C:\Users\mehra\IdeaProjects\AdversarialAttackProject\Attacked_Dataset1_alone'
+dataset_path = r'C:\Users\mehra\IdeaProjects\AdversarialAttack\Filtered_Dataset'
+attacked_path = r'C:\Users\mehra\IdeaProjects\AdversarialAttack\Attacked_Dataset1_alone'
 
 dataset_to_imagenet_idx = {
     'African elephant': 386,

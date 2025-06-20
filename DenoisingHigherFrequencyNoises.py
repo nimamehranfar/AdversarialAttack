@@ -9,13 +9,10 @@ import torch.nn.functional as F
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
+from torchvision.utils import save_image
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
-
-# Paths
-adv_dir = r"C:\Users\mehra\IdeaProjects\AdversarialAttackProject\Attacked_Dataset1_alone\king_penguin"
-# adv_dir = r"C:\Users\mehra\IdeaProjects\AdversarialAttackProject\Attacked_Dataset1\FGSM1_epsilon_0.300\king_penguin"
 
 # Load MobileNetV2 pretrained
 model = mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT).to(device)
@@ -38,7 +35,7 @@ def norm(t):
     return (t - mean) / std
 
 # Low-pass filter function in numpy for one image tensor (C,H,W) in [0,1]
-def low_pass_filter(img_tensor, radius=30):
+def low_pass_filter(img_tensor, radius=90):
     img = img_tensor.permute(1, 2, 0).cpu().numpy()  # H,W,C
 
     filtered = np.zeros_like(img)
@@ -108,50 +105,78 @@ def evaluate(predictions, true_label):
     correct = sum(p == true_label for p in predictions)
     return correct / len(predictions) * 100, correct, len(predictions)
 
-# Main procedure
-original_imgs, adv_imgs, _ = load_images(adv_dir)
 
-print(f"Loaded {len(adv_imgs)} adversarial images.")
 
-# Predict on original adv images
-adv_preds = predict_batch(model, adv_imgs, device)
-acc_adv,correct,total = evaluate(adv_preds, true_label)
-print(f"Accuracy on original adversarial images: {acc_adv:.2f}% , {correct}/{total} correct")
+success_rates1 = []
+success_rates2 = []
 
-# Apply low-pass filter on adversarial images
-# Regular 10-step radii
-radii_10 = list(range(10, 110, 10))  # [10, 20, ..., 100]
+# Main loop
+for fgsm_type in ["FGSM1", "FGSM2"]:
 
-# Additional 5-step radii between 60 and 95
-radii_5 = list(range(65, 100, 10))   # [65, 75, 85, 95]
+    # PATHS
+    if fgsm_type == "FGSM1":
+        adv_dir = "Attacked_Dataset1_alone/king_penguin"
+        out_dir = "Denoised1/king_penguin"
+    else:
+        adv_dir = "Attacked_Dataset2_alone/king_penguin"
+        out_dir = "Denoised2/king_penguin"
 
-# Combine and sort (remove duplicates just in case)
-radii = sorted(set(radii_10 + radii_5))
-accuracies = []
+    os.makedirs(out_dir, exist_ok=True)
+    original_imgs, adv_imgs, file_names = load_images(adv_dir)
 
-for radius in radii:
-    filtered_adv_imgs = []
-    for img in adv_imgs:
-        # Denormalize to pixel domain [0,1]
-        img_denorm = denorm(img)
-        # Clip just in case
-        img_denorm = torch.clamp(img_denorm, 0, 1)
-        # Apply low-pass filter with current radius
-        filtered_img = low_pass_filter(img_denorm, radius=radius)
-        # Normalize back to ImageNet space
-        filtered_img_norm = norm(filtered_img)
-        filtered_adv_imgs.append(filtered_img_norm)
+    print(f"Loaded {len(adv_imgs)} adversarial images.")
 
-    # Predict on filtered images
-    filtered_preds = predict_batch(model, filtered_adv_imgs, device)
-    acc_filtered, correct, total = evaluate(filtered_preds, true_label)
-    accuracies.append(acc_filtered)
-    print(f"Radius {radius}: Accuracy = {acc_filtered:.2f}% ({correct}/{total})")
+    # Predict on original adv images
+    adv_preds = predict_batch(model, adv_imgs, device)
+    acc_adv,correct,total = evaluate(adv_preds, true_label)
+    print(f"Accuracy on original adversarial images: {acc_adv:.2f}% , {correct}/{total} correct")
+
+    # Regular 10-step radii
+    radii_10 = list(range(10, 120, 10))  # [10, 20, ..., 100]
+
+    # Additional 5-step radii between 60 and 95
+    radii_5 = list(range(75, 105, 10))   # [65, 75, 85, 95]
+
+    # Combine and sort (remove duplicates just in case)
+    radii = sorted(set(radii_10 + radii_5))
+    # accuracies = []
+
+    # Apply low-pass filter on adversarial images
+    for radius in radii:
+        filtered_adv_imgs = []
+        for img,filename in zip(adv_imgs, file_names):
+            # Denormalize to pixel domain [0,1]
+            img_denorm = denorm(img)
+            # Clip just in case
+            img_denorm = torch.clamp(img_denorm, 0, 1)
+            # Apply low-pass filter with current radius
+            filtered_img = low_pass_filter(img_denorm, radius=radius)
+
+            # Save Img on radius 90
+            if radius == 90:
+                denoised_img = filtered_img.clamp(0, 1)
+                save_image(denoised_img, os.path.join(out_dir, filename.replace("_adv", "_denoised")))
+
+            # Normalize back to ImageNet space
+            filtered_img_norm = norm(filtered_img)
+            filtered_adv_imgs.append(filtered_img_norm)
+
+        # Predict on filtered images
+        filtered_preds = predict_batch(model, filtered_adv_imgs, device)
+        acc_filtered, correct, total = evaluate(filtered_preds, true_label)
+        # accuracies.append(acc_filtered)
+        if fgsm_type == "FGSM1":
+            success_rates1.append(acc_filtered)
+        else:
+            success_rates2.append(acc_filtered)
+
+        print(f"Radius {radius}: Accuracy = {acc_filtered:.2f}% ({correct}/{total})")
 
 # Plotting
 plt.figure(figsize=(10, 5))
-plt.plot(radii, accuracies, marker='o')
-plt.title("Accuracy vs Low-pass Filter Radius")
+plt.plot(radii, success_rates1, marker='o', mfc="white", label='FGSM1 (No Denorm)')
+plt.plot(radii, success_rates2, marker='s', mfc="black", label='FGSM2 (With Denorm/Re-norm)')
+plt.title("Model Accuracy on Both Denoised FGSM vs Low-pass Filter Radius")
 plt.xlabel("Low-pass Filter Radius")
 plt.ylabel("Accuracy (%)")
 plt.grid(True)
