@@ -1,0 +1,624 @@
+\documentclass[a4paper,12pt]{report}
+% Enable hyphenation in URLs
+\PassOptionsToPackage{hyphens}{url}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{amsmath}
+\usepackage{fancyhdr}
+\usepackage[hidelinks]{hyperref}
+\usepackage{url}
+\usepackage{titlesec}
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{float}
+\usepackage{minted}
+
+% Map Unicode minus to ASCII hyphen
+\DeclareUnicodeCharacter{2212}{-}
+
+\setlength{\parindent}{0pt}
+\lstset{
+basicstyle=\ttfamily\footnotesize,
+columns=fullflexible,
+keepspaces=true,
+breaklines=true,
+breakatwhitespace=true,
+postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
+}
+
+\hypersetup{
+colorlinks=false,
+pdfborder={0 0 0},
+linkcolor=black,
+filecolor=black,
+urlcolor=black
+}
+
+\titleformat{\chapter}[hang]{\normalfont\huge\bfseries}{\thechapter}{2pc}{}
+\titlespacing*{\chapter}{0pt}{-60pt}{20pt}
+
+\title{AdversarialAttack\\
+\vspace{0.5cm}\href{https://github.com/nimamehranfar/AdversarialAttack}{\texttt{GitHub Repository}}}
+\author{Nima Mehranfar}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+% Abstract
+\begin{abstract}
+This report presents an end-to-end pipeline for adversarial attack and recovery on a filtered subset of the \href{https://github.com/nimamehranfar/AdversarialAttack}{\texttt{NaturalImageNet}} dataset. We outline steps for dataset filtering, baseline evaluation, a single-class FGSM attack on the top-performing class, fingerprint computation (mean and median perturbations), statistical restoration attempts, frequency-domain analysis, and spectral denoising, culminating in full accuracy recovery.
+\end{abstract}
+
+% Table of contents
+\tableofcontents
+\newpage
+
+% List of Figures
+\listoffigures
+\newpage
+
+% List of Tables
+\listoftables
+\newpage
+
+% Introduction
+\chapter{Introduction}
+Deep neural networks are highly effective at image classification yet remain vulnerable to imperceptible, adversarial perturbations.
+
+\section{Objectives}
+This project’s pipeline is:
+\begin{enumerate}
+\item Filter NaturalImageNet to a balanced subset.
+\item Evaluate baseline accuracy on all classes using the existing evaluation script.
+\item Identify the single class with highest accuracy and generate adversarial examples for that class.
+\item Compute mean and median perturbation fingerprints from those adversarial attacked samples.
+\item Finding fingerprints for restoration and measure recovery.
+\item Analyze frequency‑domain perturbation patterns to isolate the attack fingerprint.
+\item Apply targeted spectral denoising and evaluate final recovery.
+\item Fine-tune model on all the attacked and restored images on all classes.
+\end{enumerate}
+
+\newpage
+
+\chapter{Dataset Filtering and Baseline Evaluation}
+\section{Dataset Filtering}
+The \texttt{FilterDataset.py} script creates a balanced dataset by copying a maximum of 300 images per selected class from the original \texttt{NaturalImageNet} directory into a new \texttt{Filtered\_Dataset} folder. This filtering ensures uniform representation of classes, enabling unbiased evaluation and attack generation.
+
+\section{Baseline Accuracy Evaluation}
+The \texttt{InitialDetection.py} module loads a pretrained model of \texttt{MobileNet\_V2} and evaluates it on the filtered dataset without any retraining or fine-tuning. It leverages PyTorch's \texttt{DataLoader} to batch and feed images into the network, computing the classification accuracy of all filtered classes. This baseline serves as a reference point to quantify the impact of adversarial attacks and subsequent restorations.
+
+\begin{table}[H]
+\centering
+\caption{Baseline Accuracy Across All Classes}
+\begin{tabular}{|l|c|}
+\hline
+\textbf{Class} & \textbf{Accuracy (\%)} \\
+\hline
+African elephant & 73.00 \\
+brown bear & 89.00 \\
+chameleon & 71.00 \\
+dragonfly & 82.00 \\
+giant panda & 96.33 \\
+gorilla & 90.00 \\
+king penguin & 97.33 \\
+koala & 96.00 \\
+ladybug & 93.00 \\
+lion & 94.00 \\
+meerkat & 95.00 \\
+orangutan & 93.67 \\
+red fox & 55.33 \\
+snail & 86.67 \\
+tiger & 96.67 \\
+kite & 78.33 \\
+Virginia deer & 44.00 \\
+\hline
+\end{tabular}
+\end{table}
+
+
+\chapter{Attack on Top‑Accuracy Class}
+\section{Generating Adversarial Examples}
+After identifying the class with the highest baseline accuracy, the \texttt{AttackOneClass.py} script performs two Fast Gradient Sign Method (FGSM) attacks on all images in that class. For each input image, it computes the gradient of the loss with respect to the input pixels, then perturbs the image in the gradient’s sign direction scaled by a small epsilon value. The perturbed images remain visually similar to the originals but cause the model to misclassify them, demonstrating vulnerability to adversarial noise.\\
+
+I used two methods like below to attack King Penguin class:
+\begin{minted}[fontsize=\small]{python}
+def fgsm_attack1(image, epsilon, data_grad):
+    # Get sign of gradients
+    sign_data_grad = data_grad.sign()
+    # Add perturbation
+    perturbed_image = image + epsilon * sign_data_grad
+    return perturbed_image
+\end{minted}
+\hfill \break
+\begin{minted}[fontsize=\small]{python}
+def fgsm_attack(image, epsilon, data_grad):
+    #De-norm, Attack, Re-norm
+    ...
+    data_denorm = denorm(data.squeeze())
+    perturbed_data = fgsm_attack1(data_denorm, epsilon, data_grad.squeeze())
+    perturbed_data_normalized = normalize(perturbed_data).unsqueeze(0)
+    ...
+\end{minted}
+
+\section{Fingerprint Vector Computation}
+Finally, I measured the model accuracy for both attacks with different epsilons:
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{Report_Img/Figure_1.png}
+\caption{Model Accuracy After FGSM Attacks with Different Epsilons}
+\end{figure}
+This results shows us that denorming before attack and normalizing after attack is much more effective method for adversarial attack; However, examples of attack with both methods and different epsilons shows us that perturbation on the first method is not as obvious to human eyes as the second method:
+\begin{figure}[!htb]
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_000_original.png}
+  %\caption{Original Image}\label{fig:awesome_image1}
+\endminipage\hfill
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_0.1_adv.png}
+  %\caption{FGSM1 - eps 0.1}\label{fig:awesome_image2}
+\endminipage\hfill
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_0.2_adv.png}
+  %\caption{FGSM1 - eps 0.2}\label{fig:awesome_image2}
+\endminipage\hfill
+\minipage{0.24\textwidth}%
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_0.3_adv.png}
+  %\caption{FGSM1 - eps 0.3}\label{fig:awesome_image3}
+\endminipage
+  \caption{FGSM1 with eps 0 to 0.3}\label{fig:awesome_image1}
+\end{figure}
+
+
+\begin{figure}[!htb]
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_000_original.png}
+  %\caption{Original Image}\label{fig:awesome_image1}
+\endminipage\hfill
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_0.1_adv.png}
+  %\caption{FGSM1 - eps 0.1}\label{fig:awesome_image2}
+\endminipage\hfill
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_0.2_adv.png}
+  %\caption{FGSM1 - eps 0.2}\label{fig:awesome_image2}
+\endminipage\hfill
+\minipage{0.24\textwidth}%
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_0.3_adv.png}
+  %\caption{FGSM1 - eps 0.3}\label{fig:awesome_image3}
+\endminipage
+  \caption{FGSM2 with eps 0 to 0.3}\label{fig:awesome_image1}
+\end{figure}
+
+\newpage
+\chapter{Finding Fingerprints}
+\section{Selecting epsilon to work on}
+I selected images that are attacked with epsilon 0.3 from FGSM1 (model\_acc=~50\%) and images that are attacked with epsilon 0.1 from FGSM2 (model\_acc=~20\%)  to evaluate different epsilon and accuracy points of the dataset and model.
+\section{Computing Perturbation Fingerprints}
+The \texttt{FindFingerprints.py} script aggregates perturbations from all adversarial images by subtracting the clean originals. It calculates two types of fingerprints like this:
+\begin{minted}[fontsize=\small]{python}
+FindFingerprints.py:
+    ...
+    adv_stack = torch.stack(adv_images)
+    orig_stack = torch.stack(orig_images)
+    
+    avg_adv = torch.mean(adv_stack, dim=0)
+    med_adv = torch.median(adv_stack, dim=0).values
+    
+    avg_orig = torch.mean(orig_stack, dim=0)
+    med_orig = torch.median(orig_stack, dim=0).values
+    
+    perturbation_avg = avg_adv - avg_orig
+    perturbation_med = med_adv - med_orig
+    ...
+\end{minted}
+\begin{itemize}
+    \item \textbf{Average fingerprint}: the pixel-wise mean perturbation across all adversarial examples, capturing consistent adversarial patterns.
+    \item \textbf{Median fingerprint}: the pixel-wise median, which is more robust to outliers and noise in perturbations.
+\end{itemize}
+
+These fingerprints summarize the typical adversarial noise signature for the attacked class.
+
+\section{Restoration via Fingerprint Subtraction}
+Using the fingerprints, the \texttt{RestoreOriginal.py} script attempts to recover original images by subtracting the mean or median fingerprint from the adversarial samples. The restored images are then re-evaluated using the initial detection pipeline to measure how much classification accuracy is recovered by this statistical denoising.
+
+\begin{table}[H]
+\centering
+\caption{Restoration Using Statistical Fingerprints - FGSM1}
+\begin{tabular}{|l|c|}
+\hline
+Method & Accuracy (\%) \\
+\hline
+Adversarial (eps=0.3)       & 51.00 \\
+Restored (Mean)   & 50.67 \\
+Restored (Median) & 50.33 \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Restoration Using Statistical Fingerprints - FGSM2 (De-norm \& Re-norm)}
+\begin{tabular}{|l|c|}
+\hline
+Method & Accuracy (\%) \\
+\hline
+Adversarial (eps=0.1)        & 21.33 \\
+Restored (Mean)   & 21.33 \\
+Restored (Median) & 21.67 \\
+\hline
+\end{tabular}
+\end{table}
+Unfortunately, we could not achieve higher accuracy after restoring images using Mean and Median perturbations. Also there is a big difference in the restored images compared to original ones:
+
+\begin{figure}[!htb]
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_000_original.png}
+  %\caption{Original Image}\label{fig:awesome_image1}
+\endminipage\hfill
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_0.3_adv.png}
+  %\caption{FGSM1 - eps 0.1}\label{fig:awesome_image2}
+\endminipage\hfill
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_000_avg_restored.png}
+  %\caption{FGSM1 - eps 0.2}\label{fig:awesome_image2}
+\endminipage\hfill
+\minipage{0.24\textwidth}%
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_000_med_restored.png}
+  %\caption{FGSM1 - eps 0.3}\label{fig:awesome_image3}
+\endminipage
+  \caption{Restored images from FGSM1 compared to Original and Adversarial Attacked example}\label{fig:awesome_image1}
+\end{figure}
+
+
+\begin{figure}[!htb]
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_000_original.png}
+  %\caption{Original Image}\label{fig:awesome_image1}
+\endminipage\hfill
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_0.1_adv.png}
+  %\caption{FGSM1 - eps 0.1}\label{fig:awesome_image2}
+\endminipage\hfill
+\minipage{0.24\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_000_avg_restored.png}
+  %\caption{FGSM1 - eps 0.2}\label{fig:awesome_image2}
+\endminipage\hfill
+\minipage{0.24\textwidth}%
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_000_med_restored.png}
+  %\caption{FGSM1 - eps 0.3}\label{fig:awesome_image3}
+\endminipage
+  \caption{Restored images from FGSM2 compared to Original and Adversarial Attacked example}\label{fig:awesome_image1}
+\end{figure}
+
+
+\chapter{Frequency‑Spectrum Analysis}
+\section{Analyzing Frequency Domain Perturbations}
+The \texttt{FrequencySpectrumAnalysis.py} script transforms clean and adversarial images into the frequency domain using 2D Fast Fourier Transform (FFT). It computes magnitude spectra and averages their differences to identify frequency bands predominantly affected by adversarial perturbations. This spectral analysis highlights characteristic frequency fingerprints of the attack, guiding the design of frequency-based denoising strategies.
+
+Here is a snippet of code:
+
+\begin{minted}[fontsize=\small]{python}
+FrequencySpectrumAnalysis.py:
+    ...
+    for filename in sorted(os.listdir(base_dir)):
+        if filename.endswith("_adv.png"):
+            adv_path = os.path.join(base_dir, filename)
+            orig_path = os.path.join(base_dir, filename.replace("_adv", "_original"))
+
+            adv_img = load_image(adv_path)
+            orig_img = load_image(orig_path)
+
+            perturbation = adv_img - orig_img  # shape (3, H, W)
+
+
+            # Convert to grayscale for frequency analysis
+            orig_gray = rgb_to_gray(orig_img)
+            adv_gray = rgb_to_gray(adv_img)
+            perturb_gray = rgb_to_gray(perturbation)
+
+            # FFT magnitude
+            orig_mag_spec = fft_magnitude(orig_gray)
+            orig_perturbation_spectra.append(orig_mag_spec)
+            adv_mag_spec = fft_magnitude(adv_gray)
+            adv_perturbation_spectra.append(adv_mag_spec)
+
+            mag_spec = fft_magnitude(perturb_gray)
+            perturbation_spectra.append(mag_spec)
+
+    # Average magnitude spectrum over all perturbations
+    orig_avg_spectrum = np.mean(orig_perturbation_spectra, axis=0)
+    adv_avg_spectrum = np.mean(adv_perturbation_spectra, axis=0)
+    avg_spectrum = np.mean(perturbation_spectra, axis=0)
+    ...
+\end{minted}
+
+
+\subsection{Observations from the Spectra}
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{Report_Img/Figure_2.png}
+\caption{Average Spectrum Difference (Adversarial − Clean) (FGSM1)}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{Report_Img/Figure_3.png}
+\caption{Average Spectrum Difference (Adversarial − Clean) (FGSM2)}
+\end{figure}
+
+\begin{enumerate}
+    \item \textbf{Original and Adversarial Spectra (Left \& Center):} Both exhibit strong low-frequency components at the center, typical of natural images. They appear visually similar, indicating that adversarial perturbations do not significantly alter global frequency content but instead make subtle changes.
+
+    \item \textbf{Perturbation Spectrum (Right):} Displays high-frequency content (radial brightness away from the center) with some low-frequency leakage (non-zero center). The color-bar max of perturbations are $\sim$2.8 \& $\sim$4 respectively, much lower than the $\sim$10 seen in original/adversarial spectra. The brightness is due to normalization, not higher absolute strength.
+\end{enumerate}
+
+
+\chapter{Spectral Denoising and Final Recovery}
+\section{Targeted Frequency Filtering}
+The \texttt{DenoisingHigherFrequencyNoises.py} script creates a high-frequency mask based on a cutoff radius determined from spectral analysis. It attenuates these frequencies in the adversarial images’ FFT representation by multiplying the spectrum by \((1 - \text{mask})\), effectively suppressing the adversarial noise localized in higher frequency bands.
+
+The inverse FFT reconstructs spatial images with reduced noise, and their classification accuracy is evaluated to quantify the denoising effectiveness. Function below is how we denoise the images:
+
+
+\begin{minted}[fontsize=\small]{python}
+def low_pass_filter(img_tensor, radius=90):
+    img = img_tensor.permute(1, 2, 0).cpu().numpy()  # H,W,C
+
+    filtered = np.zeros_like(img)
+    rows, cols = img.shape[:2]
+    crow, ccol = rows//2, cols//2
+
+    for c in range(3):
+        f = np.fft.fft2(img[:, :, c])
+        fshift = np.fft.fftshift(f)
+
+        mask = np.zeros((rows, cols), np.uint8)
+        cv2.circle(mask, (ccol, crow), radius, 1, thickness=-1)
+
+        fshift_filtered = fshift * mask
+
+        f_ishift = np.fft.ifftshift(fshift_filtered)
+        img_back = np.fft.ifft2(f_ishift)
+        img_back = np.abs(img_back)
+
+        filtered[:, :, c] = img_back
+
+    # Clip to [0,1]
+    filtered = np.clip(filtered, 0, 1)
+    # Back to tensor C,H,W
+    filtered_tensor = torch.tensor(filtered).permute(2, 0, 1)
+    return filtered_tensor
+\end{minted}
+
+\subsection{Conclusion from Radius-wise Spectral Denoising}
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{Report_Img/Figure_4.png}
+\caption{Model Accuracy After Frequency-Selective Filtering with Different Radius on FGSM1 \& FGSM2}
+\end{figure}
+
+Spectral denoising demonstrates a clear improvement in classification accuracy as the cutoff radius increases. Key observations include:
+
+\begin{itemize}
+    \item \textbf{Low radii (10$^{\circ}$--30$^{\circ}$)} result in minimal recovery, indicating that excessive removal of frequency content hinders image restoration.
+    
+    \item \textbf{Mid-range radii (50$^{\circ}$--80$^{\circ}$)} lead to significant accuracy gains, suggesting that adversarial noise is concentrated in higher frequencies, while essential image features lie in mid-to-low frequencies.
+    
+    \item \textbf{Peak performance} occurs around \textbf{radius 90$^{\circ}$}, where FGSM1 accuracy improves from 51.00\% to 69.67\%, and FGSM2 from 21.33\% to 48.00\%.
+    
+    \item \textbf{Beyond radius 90$^{\circ}$}, accuracy begins to decrease, likely due to the reintroduction of both high-frequency details and residual adversarial noise.
+\end{itemize}
+
+Overall, frequency-selective filtering proves effective in mitigating adversarial perturbations while preserving classification-relevant features, with \textbf{radius $\approx$ 90$^{\circ}$} representing an optimal trade-off.
+
+\begin{table}[H]
+\centering
+\caption{Model Accuracy After Spectral Denoising - FGSM1}
+\begin{tabular}{|l|c|}
+\hline
+Method & Accuracy (\%) \\
+\hline
+Original              & 97.00 \\
+Adversarial (eps=0.3)            & 51.00 \\
+Spectrally Restored (rad=90$^{\circ}$)   & 69.67 \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Model Accuracy After Spectral Denoising - FGSM2}
+\begin{tabular}{|l|c|}
+\hline
+Method & Accuracy (\%) \\
+\hline
+Original              & 97.00 \\
+Adversarial (eps=0.1)           & 21.33 \\
+Spectrally Restored (rad=90$^{\circ}$)   & 48.00 \\
+\hline
+\end{tabular}
+\end{table}
+
+These are examples of the images that are restored using Frequency-Selective Filtering with radius of 90 degrees:
+\begin{figure}[!htb]
+\minipage{0.32\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_000_original.png}
+  %\caption{Original Image}\label{fig:awesome_image1}
+\endminipage\hfill
+\minipage{0.32\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_0.3_adv.png}
+  %\caption{FGSM1 - eps 0.1}\label{fig:awesome_image2}
+\endminipage\hfill
+\minipage{0.32\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm1_000_denoised.png}
+  %\caption{FGSM1 - eps 0.2}\label{fig:awesome_image2}
+\endminipage\hfill
+  \caption{Denoised images from FGSM1 using Frequency-Selective Filtering (rad=90$^{\circ}$)}\label{fig:awesome_image1}
+\end{figure}
+
+\begin{figure}[!htb]
+\minipage{0.32\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_000_original.png}
+  %\caption{Original Image}\label{fig:awesome_image1}
+\endminipage\hfill
+\minipage{0.32\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_0.1_adv.png}
+  %\caption{FGSM1 - eps 0.1}\label{fig:awesome_image2}
+\endminipage\hfill
+\minipage{0.32\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/fgsm2_000_denoised.png}
+  %\caption{FGSM1 - eps 0.2}\label{fig:awesome_image2}
+\endminipage\hfill
+  \caption{Denoised images from FGSM2 using Frequency-Selective Filtering (rad=90$^{\circ}$)}\label{fig:awesome_image1}
+\end{figure}
+
+\chapter{Fine-Tuning MobileNetV2 on custom Dataset}
+\section{Getting Dataset}
+The \texttt{CreateNoisyDataset.py} script performs Adversarial attacks (both Basic FGSM and Denorm-Renorm FGSM) on all classes in the original filtered subset of the NaturalImageNet dataset, Calculates fingerprints, Restores using Average and Median and also Restores by denoising higher frequencies and saves all images in all stages to create a new dataset consisting 17 classes*300 images each*9 folders = \texttt{45900 images total} with the folder structure of below:
+\begin{itemize}
+    \item \texttt{Dataset}
+    \begin{itemize}
+        \item \texttt{Filtered\_Dataset}
+        \begin{itemize}
+            \item \texttt{<class folders>}
+        \end{itemize}
+        
+        \item \texttt{Adversarial\_Dataset}
+        \begin{itemize}
+            \item \texttt{FGSM1/ <class folders>}
+            \item \texttt{FGSM2/ <class folders>}
+        \end{itemize}
+        
+        \item \texttt{Restored}
+        \begin{itemize}
+            \item \texttt{FGSM1/avg/ <class folders>}
+            \item \texttt{FGSM1/median/ <class folders>}
+            \item \texttt{FGSM2/avg/ <class folders>}
+            \item \texttt{FGSM2/median/ <class folders>}
+        \end{itemize}
+        
+        \item \texttt{Denoised}
+        \begin{itemize}
+            \item \texttt{FGSM1/radius\_90/ <class folders>}
+            \item \texttt{FGSM2/radius\_90/ <class folders>}
+        \end{itemize}
+    \end{itemize}
+\end{itemize}
+
+\section{Training}
+The \texttt{TrainOnAllClasses.py} loads dataset and splits dataset into 70\% Train / 15\% Val / 15\% Test subsets. We perform initial evaluation on the validation set, then start training with hyper-parameters below:
+\begin{table}[H]
+\centering
+\caption{Training Hyperparameters}
+\begin{tabular}{|l|c|}
+\hline
+\textbf{Parameter} & \textbf{Value} \\
+\hline
+Model & MobileNetV2 (pretrained) \\
+Loss Function & CrossEntropyLoss \\
+Optimizer & Adam \\
+Learning Rate & $1 \times 10^{-4}$ \\
+Batch Size & 64 \\
+Epochs & 10 \\
+Learning Rate Scheduler & StepLR \\
+Scheduler Step Size & 7 \\
+Scheduler Gamma & 0.1 \\
+Training/Validation/Test Split & 70\% / 15\% / 15\% \\
+Number of Workers (DataLoader) & 14 \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{Enhanced Training Augmentation:} To improve generalization, a diverse augmentation pipeline was applied during training:
+\begin{itemize}
+  \item \texttt{RandomResizedCrop(224, scale=(0.8, 1.0))}
+  \item \texttt{RandomHorizontalFlip()}
+  \item \texttt{ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)}
+  \item \texttt{RandomRotation(15)}
+\end{itemize}
+
+
+\subsection{System Configuration}
+Experiments were conducted on the following hardware and software setup:
+
+\begin{itemize}
+    \item \textbf{GPU:} Nvidia RTX 4070m (8GB)
+    \item \textbf{CPU:} Amd Ryzen 7 8845HS
+    \item \textbf{RAM:} 32 GB
+    \item \textbf{Framework:} PyTorch 2.1.0
+    \item \textbf{CUDA Version:} 11.8
+    \item \textbf{Operating System:} Windows 11 Home 24H2
+\end{itemize}
+
+
+\subsection{Training Results}
+Here is the result of training:
+
+\begin{table}[H]
+\centering
+\caption{Training Performance Summary}
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+Epoch & Train Accuracy (\%) & Val Accuracy (\%) & Val Loss & Time (s) \\
+\hline
+Initial & -- & 30.09 & -- & -- \\
+1  & 88.23 & 95.56 & 0.1478 & 158.83 \\
+2  & 97.55 & 98.04 & 0.0755 & 150.64 \\
+3  & 99.16 & 98.68 & 0.0487 & 149.75 \\
+4  & 99.62 & 99.00 & 0.0356 & 149.78 \\
+5  & 99.76 & 99.03 & 0.0326 & 149.91 \\
+6  & 99.81 & 98.93 & 0.0378 & 149.59 \\
+7  & 99.82 & 99.01 & 0.0325 & 149.82 \\
+8  & 99.92 & 98.50 & 0.0474 & 149.68 \\
+9  & 99.95 & 99.16 & 0.0275 & 149.83 \\
+10 & 99.93 & 99.36 & 0.0232 & 149.47 \\
+\hline
+\end{tabular}
+\label{tab:training_results}
+\end{table}
+\begin{itemize}
+    \item \textbf{Initial Validation Accuracy:} 30.09\%
+    \item \textbf{Final Test Accuracy:} 99.40\%
+    \item \textbf{Total Training Time:} Approximately 1507 seconds (around 25 minutes)
+    \item \textbf{Saved Model Filename:} \texttt{mobilenet\_finetuned\_multiclass.pth}
+\end{itemize}
+
+%Training completed in 1507.30 seconds
+%Test loss: 0.0199, Test accuracy: 99.40%
+%Model saved as mobilenet_finetuned_multiclass.pth
+
+The table above shows us that training reached plateau after fifths epoch and model was able to learn adversarial attack characteristics on this dataset. Here is the figures for accuracy and loss during training:
+
+\begin{figure}[!htb]
+\minipage{0.48\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/Figure_5.png}
+  %\caption{Original Image}\label{fig:awesome_image1}
+\endminipage\hfill
+\minipage{0.48\textwidth}
+  \includegraphics[width=\linewidth]{Report_Img/Figure_6.png}
+  %\caption{FGSM1 - eps 0.1}\label{fig:awesome_image2}
+\endminipage\hfill
+  \caption{Accuracy and Loss of Training Epochs}\label{fig:awesome_image1}
+\end{figure}
+
+
+\newpage
+
+\chapter{Conclusion}
+Statistical fingerprint subtraction (mean or median) does not fully recover accuracy, whereas targeted spectral denoising  was a little bit effective mitigates adversarial noise and finally training on dataset of mixed set of original and attacked and restored images was able to completely enhance model robustness with the risk of having overfitting on the trained dataset. Future directions include adaptive cutoff strategies, more robust attacks such as Projected Gradient Descent (PGD), and incorporating adversarial training defenses to enhance model generalization.
+
+\newpage
+
+% References
+\chapter{References}
+\begin{itemize}
+    \item Project Github Repository: \url{https://github.com/nimamehranfar/AdversarialAttack}.
+    \item NaturalImageNet Dataset: \url{https://zenodo.org/records/5809346?utm_source=chatgpt.com}.
+    \item ChatGPT: \url{https://chatgpt.com/}.
+\end{itemize}
+
+\end{document}
